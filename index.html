@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0f1115">
+  <title>Anime Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-row">
+      <h1>Anime Tracker</h1>
+      <label class="switch" title="Show cover images">
+        <input type="checkbox" id="covers-toggle">
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-label">Covers</span>
+      </label>
+      <button type="button" id="refresh-btn" class="icon-btn" aria-label="Refresh from AniList" title="Refresh from AniList">↻</button>
+    </div>
+    <div class="meta-row">
+      <span id="last-updated">Not loaded yet</span>
+      <span id="progress" role="status" aria-live="polite"></span>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Tabs">
+    <span class="tab active">Anime 2026–2027</span>
+  </nav>
+
+  <section class="controls">
+    <input type="search" id="search" placeholder="Search title…" autocomplete="off" aria-label="Search by title">
+    <div class="chips" role="group" aria-label="Status filter">
+      <button type="button" class="chip" data-filter="all">All</button>
+      <button type="button" class="chip" data-filter="airing">Airing</button>
+      <button type="button" class="chip" data-filter="upcoming">Upcoming</button>
+      <button type="button" class="chip" data-filter="released">Released</button>
+      <button type="button" class="chip fav-chip" id="fav-toggle" aria-pressed="false">★ Favorites</button>
+    </div>
+  </section>
+
+  <main id="list"></main>
+
+  <footer class="app-footer">
+    Data from <a href="https://anilist.co" target="_blank" rel="noopener">AniList</a>.
+    Airing times are Japanese TV broadcast times shown in Berlin time.
+    <p id="diag" class="diag" hidden></p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

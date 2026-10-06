@@ -14,6 +14,7 @@
   --upcoming: #7aa2ff;
   --released: #8b93a3;
   --hiatus: #e0b84c;
+  --cancelled: #ff6b6b;
   --radius: 12px;
   color-scheme: dark;
 }
@@ -202,6 +203,7 @@ main { padding: 4px 16px 24px; }
 .status-upcoming { color: var(--upcoming); }
 .status-released { color: var(--released); }
 .status-hiatus { color: var(--hiatus); }
+.status-cancelled { color: var(--cancelled); }
 
 .dates { font-size: 13px; color: var(--muted); }
 .airing { display: flex; flex-direction: column; gap: 1px; }
@@ -235,3 +237,4 @@ body.compact .card-body { gap: 3px; }
 body.compact .watch-h .muted { display: none; }
 
 .app-footer { padding: 8px 16px 24px; font-size: 12px; color: var(--muted); text-align: center; }
+.diag { margin: 10px 0 0; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }

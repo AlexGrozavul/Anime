@@ -36,11 +36,11 @@ query ($page: Int, $perPage: Int, $status: [MediaStatus], $from: FuzzyDateInt, $
 // Runs are merged by AniList ID. Run D (favorites) is added at fetch time.
 const RUNS = [
   // A: released entries that started in 2026–2027 (20259999 includes year-only "2026-00-00")
-  { name: 'Released 2026–27', vars: { status: ['FINISHED'], from: 20259999, to: 20280000 } },
+  { key: 'A', name: 'Released 2026–27', vars: { status: ['FINISHED'], from: 20259999, to: 20280000 } },
   // B: everything currently airing or on hiatus, whenever it started
-  { name: 'Airing', vars: { status: ['RELEASING', 'HIATUS'] } },
+  { key: 'B', name: 'Airing', vars: { status: ['RELEASING', 'HIATUS'] } },
   // C: all upcoming; filtered client-side to 2026–27 or fully undated (TBA)
-  { name: 'Upcoming', vars: { status: ['NOT_YET_RELEASED'] } },
+  { key: 'C', name: 'Upcoming', vars: { status: ['NOT_YET_RELEASED'] } },
 ];
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
@@ -49,12 +49,13 @@ const MONTHS_SHORT = MONTHS.map(m => m.slice(0, 3));
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const SEASON_NAME = { WINTER: 'Winter', SPRING: 'Spring', SUMMER: 'Summer', FALL: 'Fall' };
 const SEASON_MONTH = { WINTER: 1, SPRING: 4, SUMMER: 7, FALL: 10 };
-const STATUS_TEXT = { NOT_YET_RELEASED: 'Upcoming', RELEASING: 'Airing', HIATUS: 'On hiatus', FINISHED: 'Released' };
-const STATUS_GROUP = { NOT_YET_RELEASED: 'upcoming', RELEASING: 'airing', HIATUS: 'airing', FINISHED: 'released' };
+const STATUS_TEXT = { NOT_YET_RELEASED: 'Upcoming', RELEASING: 'Airing', HIATUS: 'On hiatus', FINISHED: 'Released', CANCELLED: 'Cancelled' };
+const STATUS_GROUP = { NOT_YET_RELEASED: 'upcoming', RELEASING: 'airing', HIATUS: 'airing', FINISHED: 'released', CANCELLED: 'cancelled' };
 const SECTIONS = [
   { key: 'airing', title: 'Airing' },
   { key: 'upcoming', title: 'Upcoming' },
   { key: 'released', title: 'Released' },
+  { key: 'cancelled', title: 'Cancelled' }, // only starred entries ever get here
 ];
 
 // ---------- Storage helpers (localStorage can throw or be unavailable) ----------
@@ -78,7 +79,14 @@ const state = {
   query: '',
   covers: load(COVERS_KEY, true) !== false,
   favs: new Set(load(FAVS_KEY, [])),
+  diag: null,
 };
+
+// Diagnostics for the load in progress (shown at the bottom of the page).
+let stats = null;
+function newStats() {
+  return { startedAt: Date.now(), ms: 0, requests: 0, pageSizes: [], headersReadable: false, count429: 0, runs: { A: 0, B: 0, C: 0, D: 0 }, error: null };
+}
 
 // ---------- Fetching ----------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -131,6 +139,7 @@ async function gql(variables, progress) {
       if (wait > 2500) await waitWithCountdown(wait, 'Slowing down for AniList rate limit');
       else await sleep(wait);
     }
+    if (stats) stats.requests++;
     progress();
     let res;
     try {
@@ -145,8 +154,10 @@ async function gql(variables, progress) {
       throw new Error('Network error — could not reach AniList.');
     }
     scheduleNext(res.headers);
+    if (stats && (res.headers.get('X-RateLimit-Remaining') != null || res.headers.get('X-RateLimit-Limit') != null)) stats.headersReadable = true;
 
     if (res.status === 429) {
+      if (stats) stats.count429++;
       if (attempt >= MAX_RETRIES) throw new Error('AniList rate limit keeps rejecting requests. Try again later.');
       const ms = parseRetryAfter(res.headers);
       nextAllowedAt = Date.now() + ms;
@@ -173,7 +184,10 @@ async function fetchRun(vars, onPage) {
       for (let page = 1; ; page++) {
         const data = await gql({ ...vars, page, perPage }, () => onPage(page, media.length));
         media.push(...data.media);
-        if (!data.pageInfo.hasNextPage) return media;
+        if (!data.pageInfo.hasNextPage) {
+          if (stats) stats.pageSizes.push(perPage);
+          return media;
+        }
       }
     } catch (e) {
       // Query too complex for AniList at this page size: retry the run with smaller pages.
@@ -185,22 +199,23 @@ async function fetchRun(vars, onPage) {
 
 async function fetchAll() {
   const byId = new Map();
-  let requests = 0;
   const progress = (name) => (page) => {
-    requests++;
-    setProgress(`Loading ${name} (page ${page}) · ${requests} requests · ${byId.size} titles`);
+    setProgress(`Loading ${name} (page ${page}) · ${stats.requests} requests · ${byId.size} titles`);
   };
   for (const run of RUNS) {
     const media = await fetchRun(run.vars, progress(run.name));
+    stats.runs[run.key] = media.length;
     for (const m of media) byId.set(m.id, m);
   }
   // D: starred entries that the runs above didn't return, so favorites never disappear.
   const missingFavs = [...state.favs].filter(id => !byId.has(id));
   if (missingFavs.length) {
     const media = await fetchRun({ ids: missingFavs }, progress('Favorites'));
+    stats.runs.D = media.length;
     for (const m of media) byId.set(m.id, m);
   }
-  return [...byId.values()].map(normalize).filter(Boolean);
+  // Out-of-scope entries (incl. cancelled ones) are only kept while starred.
+  return [...byId.values()].map(normalize).filter(it => it && (it.inScope || state.favs.has(it.id)));
 }
 
 // ---------- Normalisation ----------
@@ -237,7 +252,7 @@ function safeUrl(u) {
 }
 
 function normalize(m) {
-  if (m.status === 'CANCELLED' || !STATUS_GROUP[m.status]) return null;
+  if (!STATUS_GROUP[m.status]) return null;
   const seen = new Set();
   const links = [];
   for (const l of m.externalLinks || []) {
@@ -312,6 +327,10 @@ function datesText(item) {
       const s = fmtFuzzy(item.start, item.season, item.seasonYear);
       return s === 'TBA' ? 'Start: TBA' : `Starts ${s}`;
     }
+    case 'cancelled': {
+      const s = fmtFuzzy(item.start, item.season, item.seasonYear);
+      return item.end && item.end.year ? `${s} – ${fmtFuzzy(item.end)}` : `Planned start: ${s}`;
+    }
     default:
       return `Started ${fmtFuzzy(item.start, item.season, item.seasonYear)}`;
   }
@@ -343,6 +362,7 @@ const SORTERS = {
     const ka = upcomingKey(a), kb = upcomingKey(b);
     return ka === kb ? byTitle(a, b) : ka - kb;
   },
+  cancelled: byTitle,
   released: (a, b) => (fuzzyNum(b.end) || fuzzyNum(b.start)) - (fuzzyNum(a.end) || fuzzyNum(a.start)) || byTitle(a, b),
 };
 
@@ -355,6 +375,24 @@ function esc(s) {
 }
 
 function setProgress(text) { $('#progress').textContent = text || ''; }
+
+function renderDiag() {
+  const d = state.diag;
+  const el = $('#diag');
+  if (!d || state.loading) { el.hidden = true; return; }
+  const sizes = [...new Set(d.pageSizes)];
+  const size = !sizes.length ? 'n/a' : sizes.length === 1 && sizes[0] === 50 ? '50' : `${sizes.join('/')} (fallback)`;
+  el.hidden = false;
+  el.textContent = [
+    `Diagnostics${d.fromCache ? ' (last refresh)' : ''}: load ${(d.ms / 1000).toFixed(1)} s`,
+    `${d.requests} requests`,
+    `page size ${size}`,
+    `rate-limit headers readable: ${d.headersReadable ? 'yes' : 'no'}`,
+    `429s: ${d.count429}`,
+    `entries A ${d.runs.A} / B ${d.runs.B} / C ${d.runs.C} / D ${d.runs.D}`,
+    ...(d.error ? [`error: ${d.error}`] : []),
+  ].join(' · ');
+}
 
 function renderUpdated() {
   const el = $('#last-updated');
@@ -416,7 +454,7 @@ function render() {
   $('#fav-toggle').classList.toggle('active', state.favOnly);
 
   const items = visibleItems();
-  const groups = { airing: [], upcoming: [], released: [] };
+  const groups = { airing: [], upcoming: [], released: [], cancelled: [] };
   for (const it of items) groups[STATUS_GROUP[it.status]].push(it);
   for (const k of Object.keys(groups)) groups[k].sort(SORTERS[k]);
 
@@ -449,21 +487,30 @@ async function refresh() {
   state.loading = true;
   $('#refresh-btn').disabled = true;
   $('#refresh-btn').classList.add('spinning');
+  renderDiag();
   if (!state.items.length) render();
+  stats = newStats();
   try {
     const items = await fetchAll();
+    stats.ms = Date.now() - stats.startedAt;
     state.items = items;
     state.updatedAt = Date.now();
-    save(CACHE_KEY, { updatedAt: state.updatedAt, items });
+    state.diag = stats;
+    save(CACHE_KEY, { updatedAt: state.updatedAt, items, diag: stats });
     setProgress('');
   } catch (e) {
     console.error(e);
+    stats.ms = Date.now() - stats.startedAt;
+    stats.error = e.message || 'Loading failed';
+    state.diag = stats;
     setProgress(`${e.message || 'Loading failed.'}${state.items.length ? ' Showing cached data.' : ''}`);
   } finally {
+    stats = null;
     state.loading = false;
     $('#refresh-btn').disabled = false;
     $('#refresh-btn').classList.remove('spinning');
     renderUpdated();
+    renderDiag();
     render();
   }
 }
@@ -508,8 +555,10 @@ function init() {
   if (cache && Array.isArray(cache.items)) {
     state.items = cache.items;
     state.updatedAt = cache.updatedAt;
+    if (cache.diag) state.diag = { ...cache.diag, fromCache: true };
   }
   renderUpdated();
+  renderDiag();
   render();
   if (!state.updatedAt || Date.now() - state.updatedAt > CACHE_TTL_MS) refresh();
 }

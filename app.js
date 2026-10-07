@@ -8,6 +8,7 @@ const YEAR_TO = 2027;
 const CACHE_KEY = 'animeTracker.cache.v1';
 const FAVS_KEY = 'animeTracker.favorites';
 const COVERS_KEY = 'animeTracker.covers';
+const COVER_OVERRIDES_KEY = 'animeTracker.coverOverrides'; // { [anilistId]: true|false }, beats the global switch
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const MIN_GAP_MS = 1000;      // at most ~1 request per second
 const SLOW_GAP_MS = 3000;     // when X-RateLimit-Remaining is getting low
@@ -69,6 +70,12 @@ function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
 }
 
+function sanitizeOverrides(o) {
+  const out = {};
+  if (o && typeof o === 'object') for (const [id, v] of Object.entries(o)) if (typeof v === 'boolean') out[id] = v;
+  return out;
+}
+
 // ---------- State ----------
 const state = {
   items: [],
@@ -78,6 +85,7 @@ const state = {
   favOnly: false,
   query: '',
   covers: load(COVERS_KEY, true) !== false,
+  coverOverrides: sanitizeOverrides(load(COVER_OVERRIDES_KEY, {})),
   favs: new Set(load(FAVS_KEY, [])),
   diag: null,
 };
@@ -403,6 +411,24 @@ function renderUpdated() {
   el.textContent = `Last updated ${f.format(new Date(state.updatedAt))}`;
 }
 
+// Per-title override wins over the global Covers switch.
+function coverOn(id) {
+  return id in state.coverOverrides ? state.coverOverrides[id] : state.covers;
+}
+
+function toggleCover(id) {
+  const next = !coverOn(id);
+  // Same as the global setting → drop the override so the title follows the switch again.
+  if (next === state.covers) delete state.coverOverrides[id]; else state.coverOverrides[id] = next;
+  save(COVER_OVERRIDES_KEY, state.coverOverrides);
+  const item = state.items.find(i => i.id === id);
+  const card = listEl.querySelector(`.card[data-id="${id}"]`);
+  if (!item || !card) { render(); return; }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = cardHtml(item).trim();
+  card.replaceWith(tmp.firstElementChild);
+}
+
 function cardHtml(item) {
   const fav = state.favs.has(item.id);
   const group = STATUS_GROUP[item.status];
@@ -414,15 +440,18 @@ function cardHtml(item) {
     ? `<div class="chips-sm">${item.links.map(l =>
         `<a class="watch-chip" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.site)}</a>`).join('')}</div>`
     : `<div class="muted small">No streaming listed yet</div>`;
-  const cover = state.covers && item.cover
+  const showCover = coverOn(item.id);
+  const cover = showCover && item.cover
     ? `<img class="cover" src="${esc(item.cover)}" alt="" loading="lazy" decoding="async">`
-    : state.covers ? '<div class="cover cover-empty"></div>' : '';
+    : showCover ? '<div class="cover cover-empty"></div>' : '';
+  const overridden = item.id in state.coverOverrides;
   return `
 <article class="card" data-id="${item.id}">
   ${cover}
   <div class="card-body">
     <div class="card-top">
       <h3 class="title">${esc(item.title)}</h3>
+      <button type="button" class="cover-btn${showCover ? ' on' : ''}${overridden ? ' custom' : ''}" data-id="${item.id}" aria-pressed="${showCover}" aria-label="${showCover ? 'Hide' : 'Show'} cover for this title" title="${showCover ? 'Hide' : 'Show'} cover for this title"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><path d="M4 18l5-5 3 3 3-4 5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>${showCover ? '' : '<path d="M3 3l18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>'}</svg></button>
       <button type="button" class="star${fav ? ' on' : ''}" data-id="${item.id}" aria-pressed="${fav}" aria-label="${fav ? 'Remove from' : 'Add to'} favorites">${fav ? '★' : '☆'}</button>
     </div>
     <div class="badges">
@@ -534,7 +563,9 @@ function toggleFav(id) {
 function init() {
   listEl.addEventListener('click', e => {
     const star = e.target.closest('.star');
-    if (star) toggleFav(Number(star.dataset.id));
+    if (star) { toggleFav(Number(star.dataset.id)); return; }
+    const cb = e.target.closest('.cover-btn');
+    if (cb) toggleCover(Number(cb.dataset.id));
   });
   document.querySelectorAll('.chip[data-filter]').forEach(btn =>
     btn.addEventListener('click', () => { state.filter = btn.dataset.filter; render(); }));
@@ -542,6 +573,9 @@ function init() {
   $('#covers-toggle').addEventListener('change', e => {
     state.covers = e.target.checked;
     save(COVERS_KEY, state.covers);
+    // Overrides that now equal the global setting are redundant.
+    for (const [id, v] of Object.entries(state.coverOverrides)) if (v === state.covers) delete state.coverOverrides[id];
+    save(COVER_OVERRIDES_KEY, state.coverOverrides);
     render();
   });
   let t;

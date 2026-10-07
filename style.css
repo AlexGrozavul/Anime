@@ -186,6 +186,22 @@ main { padding: 4px 16px 24px; }
 }
 .star.on { color: var(--star); }
 
+.cover-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin: -6px 0 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cover-btn.on { color: var(--text); }
+.cover-btn.custom { color: var(--accent); } /* differs from the global Covers switch */
+
 .badges { display: flex; flex-wrap: wrap; gap: 5px; }
 .badge {
   font-size: 11px;
@@ -234,6 +250,7 @@ body.compact .card {
   padding: 10px 0;
 }
 body.compact .card-body { gap: 3px; }
+body.compact .cover { width: 64px; height: 92px; }
 body.compact .watch-h .muted { display: none; }
 
 .app-footer { padding: 8px 16px 24px; font-size: 12px; color: var(--muted); text-align: center; }
